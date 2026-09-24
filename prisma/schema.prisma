@@ -1,0 +1,117 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────────────────────────
+// Customer — represents an end-user of Vival Digital
+// Created after successful KYC (BVN or NIN) onboarding
+// ─────────────────────────────────────────────
+model Customer {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  firstName    String
+  lastName     String
+  phone        String?
+  dob          DateTime
+
+  // KYC — which identity was used, its NIBSS ID, and verification status
+  kycType  KycType
+  kycId    String  @unique // 11-digit BVN or NIN
+  verified Boolean @default(false)
+
+  // Relations
+  account Account?
+
+  // Audit
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([kycId])
+  @@index([email])
+}
+
+// ─────────────────────────────────────────────
+// Account — one per customer, holds the NUBAN and bank link
+// Pre-funded with ₦15,000 by NIBSS on creation
+// ─────────────────────────────────────────────
+model Account {
+  id            String @id @default(cuid())
+  accountNumber String @unique // 10-digit NUBAN from NIBSS
+  bankCode      String // e.g. "649"
+  bankName      String // e.g. "VIV Bank"
+  accountName   String // resolved from NIBSS name-enquiry
+
+  // One account per customer — enforced at DB level
+  customerId String   @unique
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  // Transaction history for this account (debit side + credit side)
+  transactions Transaction[]
+
+  // Audit
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([accountNumber])
+}
+
+// ─────────────────────────────────────────────
+// Transaction — every movement affecting one of OUR accounts
+// A single interbank transfer produces ONE row per account affected
+// ─────────────────────────────────────────────
+model Transaction {
+  id        String  @id @default(cuid())
+  accountId String
+  account   Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  // DEBIT = money left this account; CREDIT = money entered this account
+  direction TransactionDirection
+
+  // NIBSS-side transaction ID (TSQ) — used for /api/transaction/{id} lookups
+  nibssTransactionId String?
+  nibssStatus        String? // "SUCCESS" | "PENDING" | "FAILED"
+
+  amount   Decimal @db.Decimal(14, 2)
+  currency String  @default("NGN")
+
+  // Counterparty info (denormalized for history display without extra lookups)
+  counterpartyAccount  String // account number on other side
+  counterpartyName     String? // from name-enquiry
+  counterpartyBankCode String?
+  counterpartyBankName String?
+
+  narration String?
+
+  // Intra-bank vs inter-bank
+  scope TransferScope
+
+  createdAt DateTime @default(now())
+
+  @@index([accountId, createdAt])
+  @@index([nibssTransactionId])
+}
+
+// ─────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────
+enum KycType {
+  BVN
+  NIN
+}
+
+enum TransactionDirection {
+  DEBIT
+  CREDIT
+}
+
+enum TransferScope {
+  INTRA_BANK // both accounts under VIV Bank (bankCode 649)
+  INTER_BANK // recipient is at a different bank
+}
