@@ -1,5 +1,7 @@
 # Vival Digital — Backend
 
+> 📖 **Interactive API docs:** Run the server and open [`http://localhost:3000/api/docs`](http://localhost:3000/api/docs) — full OpenAPI 3.0 playground with every endpoint.
+
 A digital banking backend built for the TS Academy Phoenix Cohort assignment. Integrates with the **NIBSS by Phoenix** simulated interbank API to support customer onboarding, account creation, interbank transfers, and transaction management.
 
 ## 🏦 What It Does
@@ -394,6 +396,7 @@ See the commands in the **API Reference** section. In summary:
 - **Orphaned accounts** can occur if a NIBSS call succeeds but our subsequent DB write fails. A production system would reconcile these periodically; this assignment acknowledges the trade-off.
 - **JWT secret** in `.env.example` is a placeholder — replace it with a strong random string in real deployments.
 - **CORS** is currently open. Lock it down to trusted origins before production use.
+- **API documentation** — Interactive Swagger UI at `/api/docs` (raw spec at `/api/docs.json`). Every endpoint can be tested directly from the browser after clicking **Authorize** and pasting a JWT.
 
 ## 👤 Credits
 
