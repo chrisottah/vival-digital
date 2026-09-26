@@ -148,6 +148,20 @@ npx prisma migrate deploy
 
 ### 6. Run the Server
 
+### 7. Interactive API Docs (Swagger)
+
+Once the server is running, open:
+http://localhost:3000/api/docs
+
+You'll get a fully interactive OpenAPI 3.0 playground where every endpoint can be tested in-browser:
+
+- Click **Authorize** (top right) and paste a JWT from `/api/auth/register` or `/api/auth/login`
+- Expand any endpoint and click **Try it out** → **Execute**
+
+The raw OpenAPI spec is also available at:
+http://localhost:3000/api/docs.json
+
+
 ```bash
 npm run dev
 ```
