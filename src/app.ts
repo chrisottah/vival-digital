@@ -3,6 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import authRoutes from './routes/auth.routes.js';
+import transferRoutes from './routes/transfer.routes.js';
 import { errorHandler, notFoundHandler } from './middlewares/errorHandler.js';
 import { logger } from './utils/logger.js';
 
@@ -30,6 +31,7 @@ export function createApp(): Express {
 
   // Feature routes
   app.use('/api/auth', authRoutes);
+  app.use('/api/transfer', transferRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

@@ -1,7 +1,7 @@
 import { nibssClient, NibssError } from './nibss.client';
 import { env } from '../config/env';
 
-// ─── NIBSS wraps all responses as { success, message, data } ─────────
+// ─── NIBSS wraps some responses and not others — handle both ─────────
 export interface NibssEnvelope<T> {
   success: boolean;
   message: string;
@@ -10,7 +10,7 @@ export interface NibssEnvelope<T> {
 
 export type KycType = 'BVN' | 'NIN';
 
-// ─── Payload types (what lives inside .data) ─────────────────────────
+// ─── Payload types ───────────────────────────────────────────────────
 
 interface InsertBvnPayload {
   message: string;
@@ -45,7 +45,8 @@ interface CreateAccountPayload {
 interface NameEnquiryPayload {
   accountNumber: string;
   accountName: string;
-  bankName: string;
+  bankCode?: string;
+  bankName?: string;   // NIBSS sometimes returns bankName, sometimes bankCode
 }
 
 interface BalancePayload {
@@ -55,7 +56,7 @@ interface BalancePayload {
 
 interface TransferPayload {
   message: string;
-  transactionId: string; // TSQ
+  transactionId: string;
   amount: number;
   from: string;
   to: string;
@@ -97,6 +98,19 @@ interface TransferInput {
   amount: string;
 }
 
+// ─── Helper: unwrap NIBSS response whether it's wrapped or flat ──────
+function unwrap<T>(res: any): T {
+  // NIBSS uses two shapes:
+  //   1. { success, message, data: {...} }   (wrapped — used by validate, insert)
+  //   2. { accountNumber, balance, ... }     (flat — used by some GETs)
+  //   3. { message, account: {...} }         (semi-flat — used by account/create)
+  // Try data first, then fall back to the response itself.
+  if (res && typeof res === 'object' && 'data' in res && res.data) {
+    return res.data as T;
+  }
+  return res as T;
+}
+
 // ─── Service ─────────────────────────────────────────────────────────
 
 export const nibssService = {
@@ -106,7 +120,7 @@ export const nibssService = {
       url: '/api/insertBvn',
       data: input,
     });
-    return res.data;
+    return unwrap<InsertBvnPayload>(res);
   },
 
   async insertNin(input: InsertNinInput): Promise<InsertNinPayload> {
@@ -115,25 +129,27 @@ export const nibssService = {
       url: '/api/insertNin',
       data: input,
     });
-    return res.data;
+    return unwrap<InsertNinPayload>(res);
   },
 
   async validateBvn(bvn: string): Promise<ValidateBvnPayload & { valid: boolean }> {
-    const res = await nibssClient.request<NibssEnvelope<ValidateBvnPayload>>({
+    const res = await nibssClient.request<any>({
       method: 'POST',
       url: '/api/validateBvn',
       data: { bvn },
     });
-    return { ...res.data, valid: res.success };
+    const payload = unwrap<ValidateBvnPayload>(res);
+    return { ...payload, valid: res?.success === true || !!payload?.bvn };
   },
 
   async validateNin(nin: string): Promise<ValidateNinPayload & { valid: boolean }> {
-    const res = await nibssClient.request<NibssEnvelope<ValidateNinPayload>>({
+    const res = await nibssClient.request<any>({
       method: 'POST',
       url: '/api/validateNin',
       data: { nin },
     });
-    return { ...res.data, valid: res.success };
+    const payload = unwrap<ValidateNinPayload>(res);
+    return { ...payload, valid: res?.success === true || !!payload?.nin };
   },
 
   async createAccount(input: CreateAccountInput): Promise<CreateAccountPayload> {
@@ -143,12 +159,9 @@ export const nibssService = {
       data: input,
     });
 
-    // NIBSS has been observed returning two shapes for this endpoint:
-    //   1. { message, account: {...} }                       (flat)
-    //   2. { success, message, data: { account: {...} } }    (wrapped)
-    // Handle both without breaking when NIBSS changes it again.
-    const account = res?.account ?? res?.data?.account;
-    if (!account) {
+    // account/create is semi-flat: { message, account: {...} }
+    const account = res?.account ?? res?.data?.account ?? res?.data;
+    if (!account?.accountNumber) {
       throw new NibssError(
         `Unexpected account/create response shape: ${JSON.stringify(res)}`,
       );
@@ -156,37 +169,95 @@ export const nibssService = {
     return account as CreateAccountPayload;
   },
 
-  async nameEnquiry(accountNumber: string): Promise<NameEnquiryPayload> {
-    const res = await nibssClient.request<NibssEnvelope<NameEnquiryPayload>>({
+    async nameEnquiry(accountNumber: string): Promise<NameEnquiryPayload> {
+    const res = await nibssClient.request<any>({
       method: 'GET',
       url: `/api/account/name-enquiry/${accountNumber}`,
     });
-    return res.data;
+
+    const payload = unwrap<NameEnquiryPayload>(res);
+    if (!payload?.accountNumber) {
+      throw new NibssError(
+        `Unexpected name-enquiry response shape: ${JSON.stringify(res)}`,
+      );
+    }
+
+    // Normalize: if NIBSS only returned bankCode, infer bankName from ours
+    return {
+      accountNumber: payload.accountNumber,
+      accountName: payload.accountName,
+      bankCode: payload.bankCode ?? env.NIBSS_BANK_CODE,
+      bankName: payload.bankName ?? (
+        payload.bankCode === env.NIBSS_BANK_CODE ? env.NIBSS_BANK_NAME : undefined
+      ),
+    };
   },
 
   async getBalance(accountNumber: string): Promise<BalancePayload> {
-    const res = await nibssClient.request<NibssEnvelope<BalancePayload>>({
+    const res = await nibssClient.request<any>({
       method: 'GET',
       url: `/api/account/balance/${accountNumber}`,
     });
-    return res.data;
+
+    const payload = unwrap<BalancePayload>(res);
+    if (typeof payload?.balance !== 'number') {
+      throw new NibssError(
+        `Unexpected balance response shape: ${JSON.stringify(res)}`,
+      );
+    }
+    return payload;
   },
 
   async transfer(input: TransferInput): Promise<TransferPayload> {
-    const res = await nibssClient.request<NibssEnvelope<TransferPayload>>({
+    const res = await nibssClient.request<any>({
       method: 'POST',
       url: '/api/transfer',
       data: input,
     });
-    return res.data;
+
+    // NIBSS transfer response shape (observed):
+    //   { reference, senderAccount, receiverAccount, amount, status, _id, ... }
+    const payload = unwrap<any>(res);
+    if (!payload?.reference) {
+      throw new NibssError(
+        `Unexpected transfer response shape: ${JSON.stringify(res)}`,
+      );
+    }
+
+    // Normalize to our internal TransferPayload shape
+    return {
+      message: payload.message ?? 'Transfer successful',
+      transactionId: payload.reference,
+      amount: payload.amount,
+      from: payload.senderAccount ?? input.from,
+      to: payload.receiverAccount ?? input.to,
+      status: payload.status,
+    };
   },
 
   async transactionStatus(transactionId: string): Promise<TransactionStatusPayload> {
-    const res = await nibssClient.request<NibssEnvelope<TransactionStatusPayload>>({
+    const res = await nibssClient.request<any>({
       method: 'GET',
       url: `/api/transaction/${transactionId}`,
     });
-    return res.data;
+
+    const payload = unwrap<any>(res);
+    const ref = payload?.transactionId ?? payload?.reference;
+
+    if (!ref) {
+      throw new NibssError(
+        `Unexpected transaction status response shape: ${JSON.stringify(res)}`,
+      );
+    }
+
+    return {
+      transactionId: ref,
+      status: payload.status,
+      amount: payload.amount,
+      from: payload.from ?? payload.senderAccount,
+      to: payload.to ?? payload.receiverAccount,
+      timestamp: payload.timestamp ?? payload.createdAt ?? new Date().toISOString(),
+    };
   },
 
   ourBank: {
